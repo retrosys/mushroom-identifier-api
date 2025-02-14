@@ -62,14 +62,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	var requestBody bytes.Buffer
 	multipartWriter := multipart.NewWriter(&requestBody)
 
-	// Ajout des paramètres supplémentaires requis par iNaturalist
-	if err := multipartWriter.WriteField("observation_fields", "{}"); err != nil {
-		log.Printf("Error writing observation fields: %v", err)
-		http.Error(w, "Failed to create form data", http.StatusInternalServerError)
-		return
-	}
-
-	filePart, err := multipartWriter.CreateFormFile("image", "image.jpg")
+	filePart, err := multipartWriter.CreateFormFile("images", "image.jpg")
 	if err != nil {
 		log.Printf("Error creating form file: %v", err)
 		http.Error(w, "Failed to create form file", http.StatusInternalServerError)
@@ -88,7 +81,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inatRequest, err := http.NewRequest("POST", "https://api.inaturalist.org/v1/computervision/score_image", &requestBody)
+	inatRequest, err := http.NewRequest("POST", "https://api.inaturalist.org/v2/computervision/score_image", &requestBody)
 	if err != nil {
 		log.Printf("Error creating iNaturalist request: %v", err)
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
@@ -97,7 +90,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	inatRequest.Header.Set("Accept", "application/json")
-	inatRequest.Header.Set("User-Agent", "MushroomiNat/1.0 (champiki@example.com)")
+	inatRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
 
 	client := &http.Client{}
 	inatResponse, err := client.Do(inatRequest)
@@ -108,7 +101,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer inatResponse.Body.Close()
 
-	// Lecture de la réponse pour le logging
 	responseBody, err := io.ReadAll(inatResponse.Body)
 	if err != nil {
 		log.Printf("Error reading iNaturalist response: %v", err)
@@ -116,11 +108,9 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log de la réponse pour le débogage
 	log.Printf("iNaturalist response status: %d", inatResponse.StatusCode)
 	log.Printf("iNaturalist response body: %s", string(responseBody))
 
-	// Si le statut n'est pas 2xx, on retourne une erreur
 	if inatResponse.StatusCode < 200 || inatResponse.StatusCode >= 300 {
 		errorMsg := fmt.Sprintf("iNaturalist API error (status %d): %s", inatResponse.StatusCode, string(responseBody))
 		log.Printf(errorMsg)
@@ -128,7 +118,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Renvoie la réponse au client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseBody)
