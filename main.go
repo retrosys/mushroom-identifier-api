@@ -62,7 +62,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	var requestBody bytes.Buffer
 	multipartWriter := multipart.NewWriter(&requestBody)
 
-	// Ajouter le token d'authentification
+	// Ajouter le token d'authentification comme paramètre
 	err = multipartWriter.WriteField("api_token", "eyJhbGciOiJIUzUxMiJ9.eyJic2VyX2lkIjo4OTUxNjYwLCJleHA1OjE3MzkzNDE3OD19.FYQYj0_NVZj05XcITNvxXM-krXWBiXp-n3t4k0x_l6i3MHVRDUdkzyy7lIR1T7lQvkozyM2NdPS3FeGmqQnYTg")
 	if err != nil {
 		log.Printf("Error writing api token: %v", err)
@@ -99,7 +99,8 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	inatRequest.Header.Set("Accept", "application/json")
 	inatRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
-	inatRequest.Header.Set("Authorization", "JWT eyJhbGciOiJIUzUxMiJ9.eyJic2VyX2lkIjo4OTUxNjYwLCJleHA1OjE3MzkzNDE3OD19.FYQYj0_NVZj05XcITNvxXM-krXWBiXp-n3t4k0x_l6i3MHVRDUdkzyy7lIR1T7lQvkozyM2NdPS3FeGmqQnYTg")
+	// Ajout du token dans l'en-tête Authorization avec le préfixe JWT
+	inatRequest.Header.Set("Authorization", fmt.Sprintf("JWT %s", "eyJhbGciOiJIUzUxMiJ9.eyJic2VyX2lkIjo4OTUxNjYwLCJleHA1OjE3MzkzNDE3OD19.FYQYj0_NVZj05XcITNvxXM-krXWBiXp-n3t4k0x_l6i3MHVRDUdkzyy7lIR1T7lQvkozyM2NdPS3FeGmqQnYTg"))
 
 	client := &http.Client{}
 	inatResponse, err := client.Do(inatRequest)
