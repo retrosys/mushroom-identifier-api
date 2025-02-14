@@ -45,10 +45,11 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Received request to identify image at URL: %s", req.ImageURL)
 
-	// Récupérer le token d'authentification et le formater pour iNaturalist
+	// Récupérer le token d'authentification
 	authHeader := r.Header.Get("Authorization")
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	inatToken := fmt.Sprintf("JWT %s", token) // On ajoute le préfixe JWT requis par iNaturalist
+	// Puisque le frontend envoie déjà le token avec le préfixe JWT,
+	// nous le passons directement à iNaturalist
+	token := authHeader 
 
 	imageResp, err := http.Get(req.ImageURL)
 	if err != nil {
@@ -97,7 +98,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	inatRequest.Header.Set("Accept", "application/json")
 	inatRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
-	inatRequest.Header.Set("Authorization", inatToken) // On utilise le token avec le préfixe JWT
+	inatRequest.Header.Set("Authorization", token) // On passe le token tel quel, avec son préfixe JWT
 
 	client := &http.Client{}
 	inatResponse, err := client.Do(inatRequest)
