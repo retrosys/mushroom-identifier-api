@@ -19,7 +19,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -96,11 +96,12 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	const token = "eyJhbGciOiJIUzUxMiJ9.eyJic2VyX2lkIjo4OTUxNjYwLCJleHA1OjE3MzkzNDE3OD19.FYQYj0_NVZj05XcITNvxXM-krXWBiXp-n3t4k0x_l6i3MHVRDUdkzyy7lIR1T7lQvkozyM2NdPS3FeGmqQnYTg"
+
 	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	inatRequest.Header.Set("Accept", "application/json")
 	inatRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
-	// Ajout du token dans l'en-tête Authorization avec le préfixe JWT
-	inatRequest.Header.Set("Authorization", fmt.Sprintf("JWT %s", "eyJhbGciOiJIUzUxMiJ9.eyJic2VyX2lkIjo4OTUxNjYwLCJleHA1OjE3MzkzNDE3OD19.FYQYj0_NVZj05XcITNvxXM-krXWBiXp-n3t4k0x_l6i3MHVRDUdkzyy7lIR1T7lQvkozyM2NdPS3FeGmqQnYTg"))
+	inatRequest.Header.Set("Authorization", fmt.Sprintf("JWT %s", token))
 
 	client := &http.Client{}
 	inatResponse, err := client.Do(inatRequest)
