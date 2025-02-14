@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type IdentifyRequest struct {
@@ -43,6 +44,10 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Received request to identify image at URL: %s", req.ImageURL)
+
+	// Récupérer le token d'authentification
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
 
 	imageResp, err := http.Get(req.ImageURL)
 	if err != nil {
@@ -91,7 +96,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	inatRequest.Header.Set("Accept", "application/json")
 	inatRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
-	inatRequest.Header.Set("Authorization", r.Header.Get("Authorization"))
+	inatRequest.Header.Set("Authorization", token) // On passe le token directement, sans préfixe
 
 	client := &http.Client{}
 	inatResponse, err := client.Do(inatRequest)
