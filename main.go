@@ -73,3 +73,39 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inatRequest, err := http.NewRequest("POST", "https://api.inaturalist.org/v1/computervision/score_image", &requestBody)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	inatRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+
+	client := &http.Client{}
+	inatResponse, err := client.Do(inatRequest)
+	if err != nil {
+		http.Error(w, "Failed to send request", http.StatusInternalServerError)
+		return
+	}
+	defer inatResponse.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(inatResponse.StatusCode)
+	if _, err := io.Copy(w, inatResponse.Body); err != nil {
+		log.Printf("Error copying response: %v", err)
+	}
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	http.HandleFunc("/identify", enableCORS(identifyHandler))
+
+	log.Printf("Server started on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
