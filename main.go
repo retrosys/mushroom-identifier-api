@@ -10,24 +10,53 @@ import (
 	"time"
 
 	"github.com/retrosys/mushroom-identifier-api/handlers"
-	"github.com/retrosys/mushroom-identifier-api/models"
 	"github.com/retrosys/mushroom-identifier-api/services"
 	"github.com/retrosys/mushroom-identifier-api/utils"
 )
 
+const (
+	maxRetries    = 3
+	retryWaitTime = 5 * time.Second
+	moBaseURL     = "https://mushroomobserver.org/api2"
+)
+
+type IdentifyRequest struct {
+	ImageURL string `json:"imageUrl"`
+	APIKey   string `json:"apiKey"`
+}
+
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Details string `json:"details,omitempty"`
+}
+
+func checkMOServerAvailability() error {
+	client := utils.NewHTTPClient(10 * time.Second)
+	
+	resp, err := client.Get(moBaseURL)
+	if err != nil {
+		return fmt.Errorf("Mushroom Observer API is not accessible: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMethodNotAllowed {
+		return fmt.Errorf("Mushroom Observer API returned unexpected status: %d", resp.StatusCode)
+	}
+	
+	return nil
+}
+
 func sendErrorResponse(w http.ResponseWriter, status int, message string, details string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(models.ErrorResponse{
+	json.NewEncoder(w).Encode(ErrorResponse{
 		Error:   message,
 		Details: details,
 	})
 }
 
 func identifyHandler(w http.ResponseWriter, r *http.Request) {
-	moService := services.NewMushroomObserverService()
-
-	if err := moService.CheckAvailability(); err != nil {
+	if err := checkMOServerAvailability(); err != nil {
 		log.Printf("Server availability check failed: %v", err)
 		sendErrorResponse(w, http.StatusServiceUnavailable,
 			"Le service d'identification n'est pas disponible pour le moment",
@@ -40,7 +69,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req models.IdentifyRequest
+	var req IdentifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("Error decoding request body: %v", err)
 		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
@@ -80,8 +109,8 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Successfully read image data. Size: %d bytes", len(imageBytes))
 
-	// Send identification request with retry
-	responseBody, err := moService.IdentifyWithRetry(imageBytes, req.APIKey)
+	// Send identification request
+	responseBody, err := services.SendIdentificationRequest(imageBytes, req.APIKey)
 	if err != nil {
 		log.Printf("Identification failed: %v", err)
 		sendErrorResponse(w, http.StatusInternalServerError, "Failed to identify image", err.Error())
