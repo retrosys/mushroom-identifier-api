@@ -14,6 +14,12 @@ import (
 
 type IdentifyRequest struct {
 	ImageURL string `json:"imageUrl"`
+	APIKey   string `json:"apiKey"`
+}
+
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Details string `json:"details,omitempty"`
 }
 
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
@@ -31,73 +37,118 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func sendErrorResponse(w http.ResponseWriter, status int, message string, details string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	response := ErrorResponse{
+		Error:   message,
+		Details: details,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
 func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST requests are accepted")
 		return
 	}
 
 	var req IdentifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("Error decoding request body: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body", err.Error())
 		return
 	}
 
-	log.Printf("Received request to identify image at URL: %s", req.ImageURL)
+	if req.ImageURL == "" {
+		sendErrorResponse(w, http.StatusBadRequest, "Missing image URL", "The imageUrl field is required")
+		return
+	}
 
-	imageResp, err := http.Get(req.ImageURL)
+	if req.APIKey == "" {
+		sendErrorResponse(w, http.StatusBadRequest, "Missing API key", "The apiKey field is required")
+		return
+	}
+
+	log.Printf("Processing identification request for image: %s", req.ImageURL)
+
+	// Client HTTP avec timeout plus long pour le téléchargement
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
+
+	// Télécharger l'image
+	log.Printf("Downloading image from URL: %s", req.ImageURL)
+	imageResp, err := client.Get(req.ImageURL)
 	if err != nil {
 		log.Printf("Error downloading image: %v", err)
-		http.Error(w, "Failed to download image", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to download image", err.Error())
 		return
 	}
 	defer imageResp.Body.Close()
 
 	if imageResp.StatusCode != http.StatusOK {
 		log.Printf("Error downloading image. Status: %d", imageResp.StatusCode)
-		http.Error(w, "Failed to download image", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to download image", fmt.Sprintf("Image server returned status: %d", imageResp.StatusCode))
 		return
 	}
 
+	// Lire l'image
 	imageBytes, err := io.ReadAll(imageResp.Body)
 	if err != nil {
 		log.Printf("Error reading image data: %v", err)
-		http.Error(w, "Failed to read image", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to read image data", err.Error())
 		return
 	}
 
 	log.Printf("Successfully read image data. Size: %d bytes", len(imageBytes))
 
+	// Préparer la requête multipart
 	var requestBody bytes.Buffer
 	multipartWriter := multipart.NewWriter(&requestBody)
 
-	filePart, err := multipartWriter.CreateFormFile("image", "image.jpg")
+	// Ajouter la clé API
+	if err := multipartWriter.WriteField("api_key", req.APIKey); err != nil {
+		log.Printf("Error writing api_key field: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to prepare request", err.Error())
+		return
+	}
+
+	// Ajouter la méthode
+	if err := multipartWriter.WriteField("method", "identify_image"); err != nil {
+		log.Printf("Error writing method field: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to prepare request", err.Error())
+		return
+	}
+
+	// Ajouter l'image
+	filePart, err := multipartWriter.CreateFormFile("file", "image.jpg")
 	if err != nil {
 		log.Printf("Error creating form file: %v", err)
-		http.Error(w, "Failed to create form file", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to prepare image upload", err.Error())
 		return
 	}
 
 	if _, err := filePart.Write(imageBytes); err != nil {
-		log.Printf("Error writing image data to form: %v", err)
-		http.Error(w, "Failed to write image data", http.StatusInternalServerError)
+		log.Printf("Error writing image data: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to process image data", err.Error())
 		return
 	}
 
 	if err := multipartWriter.Close(); err != nil {
 		log.Printf("Error closing multipart writer: %v", err)
-		http.Error(w, "Failed to close multipart writer", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to finalize request", err.Error())
 		return
 	}
 
-	moURL := "https://mushroomobserver.org/api/v2/images/identify"
-	log.Printf("Preparing request to Mushroom Observer at: %s", moURL)
+	// Préparer la requête à Mushroom Observer
+	moURL := "https://mushroomobserver.org/api2"
+	log.Printf("Sending request to Mushroom Observer API: %s", moURL)
 
 	moRequest, err := http.NewRequest("POST", moURL, &requestBody)
 	if err != nil {
-		log.Printf("Error creating Mushroom Observer request: %v", err)
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		log.Printf("Error creating MO request: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create identification request", err.Error())
 		return
 	}
 
@@ -105,37 +156,40 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	moRequest.Header.Set("Accept", "application/json")
 	moRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
 
-	log.Printf("Sending request to Mushroom Observer with Content-Type: %s", moRequest.Header.Get("Content-Type"))
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// Envoyer la requête avec un timeout plus long
+	moClient := &http.Client{
+		Timeout: 90 * time.Second,
 	}
-	
-	moResponse, err := client.Do(moRequest)
+
+	log.Printf("Sending request to MO with Content-Type: %s", moRequest.Header.Get("Content-Type"))
+	moResponse, err := moClient.Do(moRequest)
 	if err != nil {
-		log.Printf("Error sending request to Mushroom Observer: %v", err)
-		http.Error(w, "Failed to send request to identification service", http.StatusInternalServerError)
+		log.Printf("Error sending request to MO: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to connect to identification service", err.Error())
 		return
 	}
 	defer moResponse.Body.Close()
 
+	// Lire la réponse
 	responseBody, err := io.ReadAll(moResponse.Body)
 	if err != nil {
-		log.Printf("Error reading Mushroom Observer response: %v", err)
-		http.Error(w, "Failed to read response from identification service", http.StatusInternalServerError)
+		log.Printf("Error reading MO response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to read service response", err.Error())
 		return
 	}
 
-	log.Printf("Mushroom Observer response status: %d", moResponse.StatusCode)
-	log.Printf("Mushroom Observer response body: %s", string(responseBody))
+	log.Printf("MO response status: %d", moResponse.StatusCode)
+	log.Printf("MO response body: %s", string(responseBody))
 
+	// Vérifier le statut de la réponse
 	if moResponse.StatusCode < 200 || moResponse.StatusCode >= 300 {
 		errorMsg := fmt.Sprintf("Mushroom Observer API error (status %d): %s", moResponse.StatusCode, string(responseBody))
 		log.Printf(errorMsg)
-		http.Error(w, "Error from identification service", moResponse.StatusCode)
+		sendErrorResponse(w, moResponse.StatusCode, "Identification service error", string(responseBody))
 		return
 	}
 
+	// Renvoyer la réponse au client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseBody)
