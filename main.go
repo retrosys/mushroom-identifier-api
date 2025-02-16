@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -48,7 +47,33 @@ func sendErrorResponse(w http.ResponseWriter, status int, message string, detail
 	json.NewEncoder(w).Encode(response)
 }
 
+func checkMOServerAvailability() error {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	
+	resp, err := client.Get("https://mushroomobserver.org/api2")
+	if err != nil {
+		return fmt.Errorf("Mushroom Observer API is not accessible: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMethodNotAllowed {
+		return fmt.Errorf("Mushroom Observer API returned unexpected status: %d", resp.StatusCode)
+	}
+	
+	return nil
+}
+
 func identifyHandler(w http.ResponseWriter, r *http.Request) {
+	if err := checkMOServerAvailability(); err != nil {
+		log.Printf("Server availability check failed: %v", err)
+		sendErrorResponse(w, http.StatusServiceUnavailable, 
+			"Le service d'identification n'est pas disponible pour le moment", 
+			"Veuillez réessayer dans quelques minutes")
+		return
+	}
+
 	if r.Method != "POST" {
 		sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed", "Only POST requests are accepted")
 		return
@@ -73,7 +98,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Processing identification request for image: %s", req.ImageURL)
 
-	// Client HTTP avec timeout plus long pour le téléchargement (3 minutes)
 	client := &http.Client{
 		Timeout: 180 * time.Second,
 		Transport: &http.Transport{
@@ -85,7 +109,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// Télécharger l'image
 	log.Printf("Downloading image from URL: %s", req.ImageURL)
 	imageResp, err := client.Get(req.ImageURL)
 	if err != nil {
@@ -101,7 +124,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lire l'image
 	imageBytes, err := io.ReadAll(imageResp.Body)
 	if err != nil {
 		log.Printf("Error reading image data: %v", err)
@@ -111,25 +133,21 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Successfully read image data. Size: %d bytes", len(imageBytes))
 
-	// Préparer la requête multipart
 	var requestBody bytes.Buffer
 	multipartWriter := multipart.NewWriter(&requestBody)
 
-	// Ajouter la clé API
 	if err := multipartWriter.WriteField("api_key", req.APIKey); err != nil {
 		log.Printf("Error writing api_key field: %v", err)
 		sendErrorResponse(w, http.StatusInternalServerError, "Failed to prepare request", err.Error())
 		return
 	}
 
-	// Ajouter la méthode
 	if err := multipartWriter.WriteField("method", "identify_image"); err != nil {
 		log.Printf("Error writing method field: %v", err)
 		sendErrorResponse(w, http.StatusInternalServerError, "Failed to prepare request", err.Error())
 		return
 	}
 
-	// Ajouter l'image
 	filePart, err := multipartWriter.CreateFormFile("file", "image.jpg")
 	if err != nil {
 		log.Printf("Error creating form file: %v", err)
@@ -149,7 +167,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Préparer la requête à Mushroom Observer
 	moURL := "https://mushroomobserver.org/api2"
 	log.Printf("Sending request to Mushroom Observer API: %s", moURL)
 
@@ -164,15 +181,12 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	moRequest.Header.Set("Accept", "application/json")
 	moRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
 
-	// Envoyer la requête avec un timeout plus long (5 minutes)
 	moClient := &http.Client{
-		Timeout: 300 * time.Second,
+		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
-			ResponseHeaderTimeout: 240 * time.Second,
-			TLSHandshakeTimeout:  60 * time.Second,
-			DisableKeepAlives:    true,
-			MaxIdleConns:         100,
-			MaxIdleConnsPerHost:  100,
+			ResponseHeaderTimeout: 30 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+			DisableKeepAlives:   true,
 		},
 	}
 
@@ -185,7 +199,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer moResponse.Body.Close()
 
-	// Lire la réponse
 	responseBody, err := io.ReadAll(moResponse.Body)
 	if err != nil {
 		log.Printf("Error reading MO response: %v", err)
@@ -196,7 +209,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("MO response status: %d", moResponse.StatusCode)
 	log.Printf("MO response body: %s", string(responseBody))
 
-	// Vérifier le statut de la réponse
 	if moResponse.StatusCode < 200 || moResponse.StatusCode >= 300 {
 		errorMsg := fmt.Sprintf("Mushroom Observer API error (status %d): %s", moResponse.StatusCode, string(responseBody))
 		log.Printf(errorMsg)
@@ -204,7 +216,6 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Renvoyer la réponse au client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(responseBody)
@@ -216,7 +227,6 @@ func main() {
 		port = "8080"
 	}
 
-	// Créer un serveur avec des timeouts plus longs
 	server := &http.Server{
 		Addr:              ":" + port,
 		ReadTimeout:       300 * time.Second,
