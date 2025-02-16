@@ -38,6 +38,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req IdentifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Error decoding request body: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -52,12 +53,20 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer imageResp.Body.Close()
 
+	if imageResp.StatusCode != http.StatusOK {
+		log.Printf("Error downloading image. Status: %d", imageResp.StatusCode)
+		http.Error(w, "Failed to download image", http.StatusInternalServerError)
+		return
+	}
+
 	imageBytes, err := io.ReadAll(imageResp.Body)
 	if err != nil {
 		log.Printf("Error reading image data: %v", err)
 		http.Error(w, "Failed to read image", http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Successfully read image data. Size: %d bytes", len(imageBytes))
 
 	var requestBody bytes.Buffer
 	multipartWriter := multipart.NewWriter(&requestBody)
@@ -81,24 +90,30 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	moRequest, err := http.NewRequest("POST", "https://mushroomobserver.org/api/v2/images/identify", &requestBody)
+	moURL := "https://mushroomobserver.org/api/v2/images/identify"
+	log.Printf("Preparing request to Mushroom Observer at: %s", moURL)
+
+	moRequest, err := http.NewRequest("POST", moURL, &requestBody)
 	if err != nil {
 		log.Printf("Error creating Mushroom Observer request: %v", err)
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Sending request to Mushroom Observer URL: %s", moRequest.URL.String())
-
 	moRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	moRequest.Header.Set("Accept", "application/json")
 	moRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
 
-	client := &http.Client{}
+	log.Printf("Sending request to Mushroom Observer with Content-Type: %s", moRequest.Header.Get("Content-Type"))
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	
 	moResponse, err := client.Do(moRequest)
 	if err != nil {
 		log.Printf("Error sending request to Mushroom Observer: %v", err)
-		http.Error(w, "Failed to send request", http.StatusInternalServerError)
+		http.Error(w, "Failed to send request to identification service", http.StatusInternalServerError)
 		return
 	}
 	defer moResponse.Body.Close()
@@ -106,7 +121,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	responseBody, err := io.ReadAll(moResponse.Body)
 	if err != nil {
 		log.Printf("Error reading Mushroom Observer response: %v", err)
-		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		http.Error(w, "Failed to read response from identification service", http.StatusInternalServerError)
 		return
 	}
 
@@ -116,7 +131,7 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	if moResponse.StatusCode < 200 || moResponse.StatusCode >= 300 {
 		errorMsg := fmt.Sprintf("Mushroom Observer API error (status %d): %s", moResponse.StatusCode, string(responseBody))
 		log.Printf(errorMsg)
-		http.Error(w, errorMsg, moResponse.StatusCode)
+		http.Error(w, "Error from identification service", moResponse.StatusCode)
 		return
 	}
 
