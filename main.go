@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -72,9 +73,16 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Processing identification request for image: %s", req.ImageURL)
 
-	// Client HTTP avec timeout plus long pour le téléchargement
+	// Client HTTP avec timeout plus long pour le téléchargement (3 minutes)
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: 180 * time.Second,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 120 * time.Second,
+			TLSHandshakeTimeout:  60 * time.Second,
+			DisableKeepAlives:    true,
+			MaxIdleConns:         100,
+			MaxIdleConnsPerHost:  100,
+		},
 	}
 
 	// Télécharger l'image
@@ -156,9 +164,16 @@ func identifyHandler(w http.ResponseWriter, r *http.Request) {
 	moRequest.Header.Set("Accept", "application/json")
 	moRequest.Header.Set("User-Agent", "Mushroom Identifier/1.0")
 
-	// Envoyer la requête avec un timeout plus long
+	// Envoyer la requête avec un timeout plus long (5 minutes)
 	moClient := &http.Client{
-		Timeout: 90 * time.Second,
+		Timeout: 300 * time.Second,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 240 * time.Second,
+			TLSHandshakeTimeout:  60 * time.Second,
+			DisableKeepAlives:    true,
+			MaxIdleConns:         100,
+			MaxIdleConnsPerHost:  100,
+		},
 	}
 
 	log.Printf("Sending request to MO with Content-Type: %s", moRequest.Header.Get("Content-Type"))
@@ -201,10 +216,19 @@ func main() {
 		port = "8080"
 	}
 
+	// Créer un serveur avec des timeouts plus longs
+	server := &http.Server{
+		Addr:              ":" + port,
+		ReadTimeout:       300 * time.Second,
+		WriteTimeout:      300 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 60 * time.Second,
+	}
+
 	http.HandleFunc("/identify", enableCORS(identifyHandler))
 
 	log.Printf("Server started on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
